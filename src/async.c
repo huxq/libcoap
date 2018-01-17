@@ -20,14 +20,24 @@
 #include "mem.h"
 #include "utlist.h"
 
+/* utlist-style macros for searching pairs in linked lists */
+#define SEARCH_PAIR(head,out,field1,val1,field2,val2)   \
+  SEARCH_PAIR2(head,out,field1,val1,field2,val2,next)
+
+#define SEARCH_PAIR2(head,out,field1,val1,field2,val2,next)             \
+  do {                                                                  \
+    LL_FOREACH2(head,out,next) {                                        \
+      if ((out)->field1 == (val1) && (out)->field2 == (val2)) break;    \
+    }                                                                   \
+} while(0)
+
 coap_async_state_t *
-coap_register_async(coap_context_t *context, coap_address_t *peer,
+coap_register_async(coap_context_t *context, coap_session_t *session,
 		    coap_pdu_t *request, unsigned char flags, void *data) {
   coap_async_state_t *s;
-  coap_tid_t id;
+  coap_tid_t id = request->tid;
 
-  coap_transaction_id(peer, request, &id);
-  LL_SEARCH_SCALAR(context->async_state,s,id,id);
+  SEARCH_PAIR(context->async_state,s,session,session,id,id);
 
   if (s != NULL) {
     /* We must return NULL here as the caller must know that he is
@@ -38,30 +48,28 @@ coap_register_async(coap_context_t *context, coap_address_t *peer,
 
   /* store information for handling the asynchronous task */
   s = (coap_async_state_t *)coap_malloc(sizeof(coap_async_state_t) + 
-					request->hdr->token_length);
+					request->token_length);
   if (!s) {
     coap_log(LOG_CRIT, "coap_register_async: insufficient memory\n");
     return NULL;
   }
 
-  memset(s, 0, sizeof(coap_async_state_t) + request->hdr->token_length);
+  memset(s, 0, sizeof(coap_async_state_t) + request->token_length);
 
   /* set COAP_ASYNC_CONFIRM according to request's type */
   s->flags = flags & ~COAP_ASYNC_CONFIRM;
-  if (request->hdr->type == COAP_MESSAGE_CON)
+  if (request->type == COAP_MESSAGE_CON)
     s->flags |= COAP_ASYNC_CONFIRM;
 
   s->appdata = data;
+  s->session = coap_session_reference( session );
+  s->id = id;
 
-  memcpy(&s->peer, peer, sizeof(coap_address_t));
-
-  if (request->hdr->token_length) {
-    s->tokenlen = request->hdr->token_length;
-    memcpy(s->token, request->hdr->token, request->hdr->token_length);
+  if (request->token_length) {
+    s->tokenlen = request->token_length;
+    memcpy(s->token, request->token, request->token_length);
   }
     
-  memcpy(&s->id, &id, sizeof(coap_tid_t));
-
   coap_touch_async(s);
 
   LL_PREPEND(context->async_state, s);
@@ -70,16 +78,16 @@ coap_register_async(coap_context_t *context, coap_address_t *peer,
 }
 
 coap_async_state_t *
-coap_find_async(coap_context_t *context, coap_tid_t id) {
+coap_find_async(coap_context_t *context, coap_session_t *session, coap_tid_t id) {
   coap_async_state_t *tmp;
-  LL_SEARCH_SCALAR(context->async_state,tmp,id,id);  
+  SEARCH_PAIR(context->async_state,tmp,session,session,id,id);
   return tmp;
 }
 
 int
-coap_remove_async(coap_context_t *context, coap_tid_t id, 
-		  coap_async_state_t **s) {
-  coap_async_state_t *tmp = coap_find_async(context, id);
+coap_remove_async(coap_context_t *context, coap_session_t *session,
+                  coap_tid_t id, coap_async_state_t **s) {
+  coap_async_state_t *tmp = coap_find_async(context, session, id);
 
   if (tmp)
     LL_DELETE(context->async_state,tmp);
@@ -90,11 +98,17 @@ coap_remove_async(coap_context_t *context, coap_tid_t id,
 
 void 
 coap_free_async(coap_async_state_t *s) {
-  if (s && (s->flags & COAP_ASYNC_RELEASE_DATA) != 0)
-    coap_free(s->appdata);
-  coap_free(s); 
+  if (s) {
+    if (s->session) {
+      coap_session_release(s->session);
+    }
+    if ((s->flags & COAP_ASYNC_RELEASE_DATA) != 0) {
+      coap_free(s->appdata);
+    }
+    coap_free(s);
+  }
 }
 
 #else
-void does_not_exist();	/* make some compilers happy */
+void does_not_exist(void);	/* make some compilers happy */
 #endif /* WITHOUT_ASYNC */

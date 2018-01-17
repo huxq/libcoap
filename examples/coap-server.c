@@ -11,23 +11,27 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <ctype.h>
-#include <sys/select.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <signal.h>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#include "getopt.c"
+#else
+#include <unistd.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <sys/stat.h>
 #include <dirent.h>
-#include <errno.h>
-#include <signal.h>
+#endif
 
-#include "coap_config.h"
-#include "resource.h"
-#include "coap.h"
+#include <coap/coap.h>
+#include <coap/coap_dtls.h>
 
 #define COAP_RESOURCE_CHECK_TIME 2
 
@@ -68,14 +72,14 @@ handle_sigint(int signum UNUSED_PARAM) {
 static void
 hnd_get_index(coap_context_t *ctx UNUSED_PARAM,
               struct coap_resource_t *resource UNUSED_PARAM,
-              const coap_endpoint_t *local_interface UNUSED_PARAM,
-              coap_address_t *peer UNUSED_PARAM,
+              coap_session_t *session UNUSED_PARAM,
               coap_pdu_t *request UNUSED_PARAM,
               str *token UNUSED_PARAM,
+              str *query UNUSED_PARAM,
               coap_pdu_t *response) {
   unsigned char buf[3];
 
-  response->hdr->code = COAP_RESPONSE_CODE(205);
+  response->code = COAP_RESPONSE_CODE(205);
 
   coap_add_option(response,
                   COAP_OPTION_CONTENT_TYPE,
@@ -91,30 +95,28 @@ hnd_get_index(coap_context_t *ctx UNUSED_PARAM,
 static void
 hnd_get_time(coap_context_t  *ctx,
              struct coap_resource_t *resource,
-             const coap_endpoint_t *local_interface UNUSED_PARAM,
-             coap_address_t *peer,
+             coap_session_t *session,
              coap_pdu_t *request,
              str *token,
+             str *query,
              coap_pdu_t *response) {
-  coap_opt_iterator_t opt_iter;
-  coap_opt_t *option;
   unsigned char buf[40];
   size_t len;
   time_t now;
   coap_tick_t t;
+  (void)request;
 
   /* FIXME: return time, e.g. in human-readable by default and ticks
    * when query ?ticks is given. */
 
   /* if my_clock_base was deleted, we pretend to have no such resource */
-  response->hdr->code =
+  response->code =
     my_clock_base ? COAP_RESPONSE_CODE(205) : COAP_RESPONSE_CODE(404);
 
-  if (coap_find_observer(resource, peer, token)) {
-    /* FIXME: need to check for resource->dirty? */
+  if (coap_find_observer(resource, session, token)) {
     coap_add_option(response,
                     COAP_OPTION_OBSERVE,
-                    coap_encode_var_bytes(buf, ctx->observe), buf);
+                    coap_encode_var_bytes(buf, resource->observe), buf);
   }
 
   if (my_clock_base)
@@ -132,24 +134,16 @@ hnd_get_time(coap_context_t  *ctx,
     coap_ticks(&t);
     now = my_clock_base + (t / COAP_TICKS_PER_SECOND);
 
-    if (request != NULL
-        && (option = coap_check_option(request, COAP_OPTION_URI_QUERY, &opt_iter))
-        && memcmp(COAP_OPT_VALUE(option), "ticks",
-        min(5, COAP_OPT_LENGTH(option))) == 0) {
+    if (query != NULL
+        && memcmp(query->s, "ticks", min(5, query->length)) == 0) {
           /* output ticks */
-          len = snprintf((char *)buf,
-                         min(sizeof(buf),
-                             response->max_size - response->length),
-                             "%u", (unsigned int)now);
+          len = snprintf((char *)buf, sizeof(buf), "%u", (unsigned int)now);
           coap_add_data(response, len, buf);
 
     } else {      /* output human-readable time */
       struct tm *tmp;
       tmp = gmtime(&now);
-      len = strftime((char *)buf,
-                     min(sizeof(buf),
-                     response->max_size - response->length),
-                     "%b %d %H:%M:%S", tmp);
+      len = strftime((char *)buf, sizeof(buf), "%b %d %H:%M:%S", tmp);
       coap_add_data(response, len, buf);
     }
   }
@@ -157,11 +151,11 @@ hnd_get_time(coap_context_t  *ctx,
 
 static void
 hnd_put_time(coap_context_t *ctx UNUSED_PARAM,
-             struct coap_resource_t *resource UNUSED_PARAM,
-             const coap_endpoint_t *local_interface UNUSED_PARAM,
-             coap_address_t *peer UNUSED_PARAM,
+             struct coap_resource_t *resource,
+             coap_session_t *session UNUSED_PARAM,
              coap_pdu_t *request,
              str *token UNUSED_PARAM,
+             str *query UNUSED_PARAM,
              coap_pdu_t *response) {
   coap_tick_t t;
   size_t size;
@@ -173,12 +167,13 @@ hnd_put_time(coap_context_t *ctx UNUSED_PARAM,
    */
 
   /* if my_clock_base was deleted, we pretend to have no such resource */
-  response->hdr->code =
+  response->code =
     my_clock_base ? COAP_RESPONSE_CODE(204) : COAP_RESPONSE_CODE(201);
 
-  resource->dirty = 1;
+  coap_resource_set_dirty(resource, NULL);
 
-  coap_get_data(request, &size, &data);
+  /* coap_get_data() sets size to 0 on error */
+  (void)coap_get_data(request, &size, &data);
 
   if (size == 0)        /* re-init */
     my_clock_base = clock_offset;
@@ -194,10 +189,10 @@ hnd_put_time(coap_context_t *ctx UNUSED_PARAM,
 static void
 hnd_delete_time(coap_context_t *ctx UNUSED_PARAM,
                 struct coap_resource_t *resource UNUSED_PARAM,
-                const coap_endpoint_t *local_interface UNUSED_PARAM,
-                coap_address_t *peer UNUSED_PARAM,
+                coap_session_t *session UNUSED_PARAM,
                 coap_pdu_t *request UNUSED_PARAM,
                 str *token UNUSED_PARAM,
+                str *query UNUSED_PARAM,
                 coap_pdu_t *response UNUSED_PARAM) {
   my_clock_base = 0;    /* mark clock as "deleted" */
 
@@ -209,36 +204,33 @@ hnd_delete_time(coap_context_t *ctx UNUSED_PARAM,
 static void
 hnd_get_async(coap_context_t *ctx,
               struct coap_resource_t *resource UNUSED_PARAM,
-              const coap_endpoint_t *local_interface UNUSED_PARAM,
-              coap_address_t *peer,
+              coap_session_t *session,
               coap_pdu_t *request,
               str *token UNUSED_PARAM,
+              str *query UNUSED_PARAM,
               coap_pdu_t *response) {
-  coap_opt_iterator_t opt_iter;
-  coap_opt_t *option;
   unsigned long delay = 5;
   size_t size;
 
   if (async) {
-    if (async->id != request->hdr->id) {
+    if (async->id != request->tid) {
       coap_opt_filter_t f;
       coap_option_filter_clear(f);
-      response->hdr->code = COAP_RESPONSE_CODE(503);
+      response->code = COAP_RESPONSE_CODE(503);
     }
     return;
   }
 
-  option = coap_check_option(request, COAP_OPTION_URI_QUERY, &opt_iter);
-  if (option) {
-    unsigned char *p = COAP_OPT_VALUE(option);
+  if (query) {
+    unsigned char *p = query->s;
 
     delay = 0;
-    for (size = COAP_OPT_LENGTH(option); size; --size, ++p)
+    for (size = query->length; size; --size, ++p)
       delay = delay * 10 + (*p - '0');
   }
 
   async = coap_register_async(ctx,
-                              peer,
+                              session,
                               request,
                               COAP_ASYNC_SEPARATE | COAP_ASYNC_CONFIRM,
                               (void *)(COAP_TICKS_PER_SECOND * delay));
@@ -246,12 +238,11 @@ hnd_get_async(coap_context_t *ctx,
 
 static void
 check_async(coap_context_t *ctx,
-            const coap_endpoint_t *local_if,
             coap_tick_t now) {
   coap_pdu_t *response;
   coap_async_state_t *tmp;
 
-  size_t size = sizeof(coap_hdr_t) + 13;
+  size_t size = 13;
 
   if (!async || now < async->created + (unsigned long)async->appdata)
     return;
@@ -267,19 +258,17 @@ check_async(coap_context_t *ctx,
     return;
   }
 
-  response->hdr->id = coap_new_message_id(ctx);
+  response->tid = coap_new_message_id(async->session);
 
   if (async->tokenlen)
     coap_add_token(response, async->tokenlen, async->token);
 
   coap_add_data(response, 4, (unsigned char *)"done");
 
-  if (coap_send(ctx, local_if, &async->peer, response) == COAP_INVALID_TID) {
-    debug("check_async: cannot send response for message %d\n",
-    response->hdr->id);
+  if (coap_send(async->session, response) == COAP_INVALID_TID) {
+    debug("check_async: cannot send response for message\n");
   }
-  coap_delete_pdu(response);
-  coap_remove_async(ctx, async->id, &tmp);
+  coap_remove_async(ctx, async->session, async->id, &tmp);
   coap_free_async(async);
   async = NULL;
 }
@@ -323,6 +312,13 @@ init_resources(coap_context_t *ctx) {
 }
 
 static void
+fill_keystore(coap_context_t *ctx) {
+  static uint8_t key[] = "secretPSK";
+  size_t key_len = sizeof( key ) - 1;
+  coap_context_set_psk( ctx, "CoAP", key, key_len );
+}
+
+static void
 usage( const char *program, const char *version) {
   const char *p;
 
@@ -336,8 +332,10 @@ usage( const char *program, const char *version) {
      "\t-A address\tinterface address to bind to\n"
      "\t-g group\tjoin the given multicast group\n"
      "\t-p port\t\tlisten on specified port\n"
-     "\t-v num\t\tverbosity level (default: 3)\n",
-     program, version, program );
+     "\t-v num\t\tverbosity level (default: 3)\n"
+     "\t-l list\t\tFail to send some datagram specified by a comma separated list of number or number intervals(for debugging only)\n"
+     "\t-l loss%%\t\tRandmoly fail to send datagrams with the specified probability(for debugging only)\n",
+    program, version, program );
 }
 
 static coap_context_t *
@@ -347,6 +345,11 @@ get_context(const char *node, const char *port) {
   struct addrinfo hints;
   struct addrinfo *result, *rp;
 
+  ctx = coap_new_context(NULL);
+  if (!ctx) {
+    return NULL;
+  }
+
   memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
   hints.ai_socktype = SOCK_DGRAM; /* Coap uses UDP */
@@ -355,29 +358,57 @@ get_context(const char *node, const char *port) {
   s = getaddrinfo(node, port, &hints, &result);
   if ( s != 0 ) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+    coap_free_context(ctx);
     return NULL;
   }
 
   /* iterate through results until success */
   for (rp = result; rp != NULL; rp = rp->ai_next) {
-    coap_address_t addr;
+    coap_address_t addr, addrs;
+    coap_endpoint_t *ep_udp = NULL, *ep_dtls = NULL, *ep_tcp = NULL, *ep_tls = NULL;
 
     if (rp->ai_addrlen <= sizeof(addr.addr)) {
       coap_address_init(&addr);
       addr.size = rp->ai_addrlen;
       memcpy(&addr.addr, rp->ai_addr, rp->ai_addrlen);
-
-      ctx = coap_new_context(&addr);
-      if (ctx) {
-        /* TODO: output address:port for successful binding */
+      addrs = addr;
+      if (addr.addr.sa.sa_family == AF_INET) {
+        addrs.addr.sin.sin_port = htons(ntohs(addr.addr.sin.sin_port) + 1);
+      } else if (addr.addr.sa.sa_family == AF_INET6) {
+        addrs.addr.sin6.sin6_port = htons(ntohs(addr.addr.sin6.sin6_port) + 1);
+      } else {
         goto finish;
       }
+
+      ep_udp = coap_new_endpoint(ctx, &addr, COAP_PROTO_UDP);
+      if (ep_udp) {
+	if (coap_dtls_is_supported()) {
+	  ep_dtls = coap_new_endpoint(ctx, &addrs, COAP_PROTO_DTLS);
+	  if (!ep_dtls)
+	    coap_log(LOG_CRIT, "cannot create DTLS endpoint\n");
+	}
+      } else {
+        coap_log(LOG_CRIT, "cannot create UDP endpoint\n");
+        continue;
+      }
+      ep_tcp = coap_new_endpoint(ctx, &addr, COAP_PROTO_TCP);
+      if (ep_tcp) {
+	if (coap_tls_is_supported()) {
+	  ep_tls = coap_new_endpoint(ctx, &addrs, COAP_PROTO_TLS);
+	  if (!ep_tls)
+	    coap_log(LOG_CRIT, "cannot create TLS endpoint\n");
+	}
+      } else {
+        coap_log(LOG_CRIT, "cannot create TCP endpoint\n");
+      }
+      if (ep_udp)
+	goto finish;
     }
   }
 
   fprintf(stderr, "no context available for interface '%s'\n", node);
 
-  finish:
+finish:
   freeaddrinfo(result);
   return ctx;
 }
@@ -394,7 +425,7 @@ join(coap_context_t *ctx, char *group_name){
   hints.ai_socktype = SOCK_DGRAM;
 
   result = getaddrinfo("::", NULL, &hints, &reslocal);
-  if (result < 0) {
+  if (result != 0) {
     fprintf(stderr, "join: cannot resolve link-local interface: %s\n",
             gai_strerror(result));
     goto finish;
@@ -416,7 +447,7 @@ join(coap_context_t *ctx, char *group_name){
   /* resolve the multicast group address */
   result = getaddrinfo(group_name, NULL, &hints, &resmulti);
 
-  if (result < 0) {
+  if (result != 0) {
     fprintf(stderr, "join: cannot resolve multicast address: %s\n",
             gai_strerror(result));
     goto finish;
@@ -430,10 +461,14 @@ join(coap_context_t *ctx, char *group_name){
     }
   }
 
-  result = setsockopt(ctx->sockfd, IPPROTO_IPV6, IPV6_JOIN_GROUP,
-          (char *)&mreq, sizeof(mreq));
-  if (result < 0)
-    perror("join: setsockopt");
+  if (ctx->endpoint) {
+    result = setsockopt(ctx->endpoint->sock.fd, IPPROTO_IPV6, IPV6_JOIN_GROUP, (char *)&mreq, sizeof(mreq));
+    if ( result == COAP_SOCKET_ERROR ) {
+      fprintf( stderr, "join: setsockopt: %s\n", coap_socket_strerror() );
+    }
+  } else {
+    result = -1;
+  }
 
  finish:
   freeaddrinfo(resmulti);
@@ -446,19 +481,16 @@ int
 main(int argc, char **argv) {
   coap_context_t  *ctx;
   char *group = NULL;
-  fd_set readfds;
-  struct timeval tv, *timeout;
-  int result;
   coap_tick_t now;
-  coap_queue_t *nextpdu;
   char addr_str[NI_MAXHOST] = "::";
   char port_str[NI_MAXSERV] = "5683";
   int opt;
   coap_log_t log_level = LOG_WARNING;
+  unsigned wait_ms;
 
   clock_offset = time(NULL);
 
-  while ((opt = getopt(argc, argv, "A:g:p:v:")) != -1) {
+  while ((opt = getopt(argc, argv, "A:g:p:v:l:")) != -1) {
     switch (opt) {
     case 'A' :
       strncpy(addr_str, optarg, NI_MAXHOST-1);
@@ -474,18 +506,27 @@ main(int argc, char **argv) {
     case 'v' :
       log_level = strtol(optarg, NULL, 10);
       break;
+    case 'l':
+      if (!coap_debug_set_packet_loss(optarg)) {
+	usage(argv[0], LIBCOAP_PACKAGE_VERSION);
+	exit(1);
+      }
+      break;
     default:
-      usage( argv[0], PACKAGE_VERSION );
+      usage( argv[0], LIBCOAP_PACKAGE_VERSION );
       exit( 1 );
     }
   }
 
+  coap_startup();
+  coap_dtls_set_log_level(log_level);
   coap_set_log_level(log_level);
 
   ctx = get_context(addr_str, port_str);
   if (!ctx)
     return -1;
 
+  fill_keystore(ctx);
   init_resources(ctx);
 
   /* join multicast group if requested at command line */
@@ -494,47 +535,25 @@ main(int argc, char **argv) {
 
   signal(SIGINT, handle_sigint);
 
+  wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
+
   while ( !quit ) {
-    FD_ZERO(&readfds);
-    FD_SET( ctx->sockfd, &readfds );
-
-    nextpdu = coap_peek_next( ctx );
-
-    coap_ticks(&now);
-    while (nextpdu && nextpdu->t <= now - ctx->sendqueue_basetime) {
-      coap_retransmit( ctx, coap_pop_next( ctx ) );
-      nextpdu = coap_peek_next( ctx );
-    }
-
-    if ( nextpdu && nextpdu->t <= COAP_RESOURCE_CHECK_TIME ) {
-      /* set timeout if there is a pdu to send before our automatic timeout occurs */
-      tv.tv_usec = ((nextpdu->t) % COAP_TICKS_PER_SECOND) * 1000000 / COAP_TICKS_PER_SECOND;
-      tv.tv_sec = (nextpdu->t) / COAP_TICKS_PER_SECOND;
-      timeout = &tv;
+    int result = coap_run_once( ctx, wait_ms );
+    if ( result < 0 ) {
+      break;
+    } else if ( (unsigned)result < wait_ms ) {
+      wait_ms -= result;
     } else {
-      tv.tv_usec = 0;
-      tv.tv_sec = COAP_RESOURCE_CHECK_TIME;
-      timeout = &tv;
-    }
-    result = select( FD_SETSIZE, &readfds, 0, 0, timeout );
-
-    if ( result < 0 ) {         /* error */
-      if (errno != EINTR)
-        perror("select");
-    } else if ( result > 0 ) {  /* read from socket */
-      if ( FD_ISSET( ctx->sockfd, &readfds ) ) {
-        coap_read( ctx );       /* read received data */
-        /* coap_dispatch( ctx );  /\* and dispatch PDUs from receivequeue *\/ */
+      if ( time_resource ) {
+	coap_resource_set_dirty(time_resource, NULL);
       }
-    } else {      /* timeout */
-      if (time_resource) {
-        time_resource->dirty = 1;
-      }
+      wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
     }
 
 #ifndef WITHOUT_ASYNC
     /* check if we have to send asynchronous responses */
-    check_async(ctx, ctx->endpoint, now);
+    coap_ticks( &now );
+    check_async(ctx, now);
 #endif /* WITHOUT_ASYNC */
 
 #ifndef WITHOUT_OBSERVE
@@ -544,6 +563,7 @@ main(int argc, char **argv) {
   }
 
   coap_free_context(ctx);
+  coap_cleanup();
 
   return 0;
 }

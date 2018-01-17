@@ -8,6 +8,7 @@
 
 
 #include "coap_config.h"
+#include "libcoap.h"
 #include "mem.h"
 #include "debug.h"
 
@@ -31,12 +32,14 @@ coap_memory_init(void) {
 #endif /* __GNUC__ */
 
 void *
-coap_malloc_type(coap_memory_tag_t type UNUSED_PARAM, size_t size) {
+coap_malloc_type(coap_memory_tag_t type, size_t size) {
+  (void)type;
   return malloc(size);
 }
 
 void
-coap_free_type(coap_memory_tag_t type UNUSED_PARAM, void *p) {
+coap_free_type(coap_memory_tag_t type, void *p) {
+  (void)type;
   free(p);
 }
 
@@ -56,8 +59,9 @@ struct coap_string_t {
 #include "pdu.h"
 #include "coap_io.h"
 #include "resource.h"
+#include "coap_session.h"
 
-#define COAP_MAX_PACKET_SIZE (sizeof(coap_packet_t) + COAP_MAX_PDU_SIZE)
+#define COAP_MAX_PACKET_SIZE (sizeof(coap_packet_t) + COAP_RXBUFFER_SIZE)
 #define COAP_MAX_PACKETS     2
 
 typedef union {
@@ -67,6 +71,7 @@ typedef union {
 
 MEMB(string_storage, struct coap_string_t, COAP_MAX_STRINGS);
 MEMB(packet_storage, coap_packetbuf_t, COAP_MAX_PACKETS);
+MEMB(session_storage, coap_session_t, COAP_MAX_SESSIONS);
 MEMB(node_storage, coap_queue_t, COAP_PDU_MAXCNT);
 MEMB(pdu_storage, coap_pdu_t, COAP_PDU_MAXCNT);
 MEMB(pdu_buf_storage, coap_packetbuf_t, COAP_PDU_MAXCNT);
@@ -78,6 +83,7 @@ get_container(coap_memory_tag_t type) {
   switch(type) {
   case COAP_PACKET: return &packet_storage;
   case COAP_NODE:   return &node_storage;
+  case COAP_SESSION: return &session_storage;
   case COAP_PDU:     return &pdu_storage;
   case COAP_PDU_BUF: return &pdu_buf_storage;
   case COAP_RESOURCE: return &resource_storage;
@@ -92,6 +98,7 @@ coap_memory_init(void) {
   memb_init(&string_storage);
   memb_init(&packet_storage);
   memb_init(&node_storage);
+  memb_init(&session_storage);
   memb_init(&pdu_storage);
   memb_init(&pdu_buf_storage);
   memb_init(&resource_storage);

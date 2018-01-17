@@ -27,6 +27,7 @@ typedef enum {
   LOG_EMERG=0,
   LOG_ALERT,
   LOG_CRIT,
+  LOG_ERR,
   LOG_WARNING,
   LOG_NOTICE,
   LOG_INFO,
@@ -39,6 +40,11 @@ coap_log_t coap_get_log_level(void);
 
 /** Sets the log level to the specified value. */
 void coap_set_log_level(coap_log_t level);
+
+typedef void (*coap_log_handler_t) (coap_log_t level, const char *message);
+
+/** Add a custom log callback, use NULL to reset default handler */
+void coap_set_log_handler(coap_log_handler_t handler);
 
 /** Returns a zero-terminated string with the name of this library. */
 const char *coap_package_name(void);
@@ -54,10 +60,8 @@ const char *coap_package_version(void);
 void coap_log_impl(coap_log_t level, const char *format, ...);
 
 #ifndef coap_log
-#define coap_log(...) coap_log_impl(__VA_ARGS__)
+#define coap_log(level, ...) do { if ((level)<=coap_get_log_level()) coap_log_impl((level), __VA_ARGS__); } while(0)
 #endif
-
-#ifndef NDEBUG
 
 /* A set of convenience macros for common log levels. */
 #define info(...) coap_log(LOG_INFO, __VA_ARGS__)
@@ -70,15 +74,7 @@ void coap_show_pdu(const coap_pdu_t *);
 struct coap_address_t;
 size_t coap_print_addr(const struct coap_address_t *, unsigned char *, size_t);
 
-#else
-
-#define debug(...)
-#define info(...)
-#define warn(...)
-
-#define coap_show_pdu(x)
-#define coap_print_addr(...)
-
-#endif /* NDEBUG */
+int coap_debug_set_packet_loss(const char *loss_level);
+int coap_debug_send_packet(void);
 
 #endif /* _COAP_DEBUG_H_ */

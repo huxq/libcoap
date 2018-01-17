@@ -53,8 +53,7 @@
 /** Subscriber information */
 typedef struct coap_subscription_t {
   struct coap_subscription_t *next; /**< next element in linked list */
-  coap_endpoint_t local_if;         /**< local communication interface */
-  coap_address_t subscriber;        /**< address and port of subscriber */
+  coap_session_t *session;	    /**< subscriber session */
 
   unsigned int non_cnt:4;  /**< up to 15 non-confirmable notifies allowed */
   unsigned int fail_cnt:2; /**< up to 3 confirmable notifies can fail */
@@ -63,6 +62,7 @@ typedef struct coap_subscription_t {
                             *   dirty flag is set too) */
   size_t token_length;     /**< actual length of token */
   unsigned char token[8];  /**< token used for subscription */
+  str *query;              /**< query string used for subscription, if any */
 } coap_subscription_t;
 
 void coap_subscription_init(coap_subscription_t *);

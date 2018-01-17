@@ -13,8 +13,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "debug.h"
-#include "mem.h"
+#include <coap/libcoap.h>
+#include <coap/debug.h>
+#include <coap/mem.h>
 #include "coap_list.h"
 
 

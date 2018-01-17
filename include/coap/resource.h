@@ -41,10 +41,10 @@
 typedef void (*coap_method_handler_t)
   (coap_context_t  *,
    struct coap_resource_t *,
-   const coap_endpoint_t *,
-   coap_address_t *,
+   coap_session_t *,
    coap_pdu_t *,
    str * /* token */,
+   str * /* query string */,
    coap_pdu_t * /* response */);
 
 #define COAP_ATTR_FLAGS_RELEASE_NAME  0x1
@@ -57,8 +57,19 @@ typedef struct coap_attr_t {
   int flags;
 } coap_attr_t;
 
+/** The URI passed to coap_resource_init() is free'd by coap_delete_resource(). */
 #define COAP_RESOURCE_FLAGS_RELEASE_URI 0x1
+
+/**
+ * Notifications will be sent non-confirmable by default. RFC 7641 Section 4.5
+ * https://tools.ietf.org/html/rfc7641#section-4.5
+ */
 #define COAP_RESOURCE_FLAGS_NOTIFY_NON  0x0
+
+/**
+ * Notifications will be sent confirmable by default. RFC 7641 Section 4.5
+ * https://tools.ietf.org/html/rfc7641#section-4.5
+ */
 #define COAP_RESOURCE_FLAGS_NOTIFY_CON  0x2
 
 typedef struct coap_resource_t {
@@ -69,12 +80,13 @@ typedef struct coap_resource_t {
   unsigned int cacheable:1;      /**< can be cached */
 
   /**
-   * Used to store handlers for the four coap methods @c GET, @c POST, @c PUT,
-   * and @c DELETE. coap_dispatch() will pass incoming requests to the handler
+   * Used to store handlers for the seven coap methods @c GET, @c POST, @c PUT,
+   * @c DELETE, @c FETCH, @c PATCH and @c IPATCH.
+   * coap_dispatch() will pass incoming requests to the handler
    * that corresponds to its request method or generate a 4.05 response if no
    * handler is available.
    */
-  coap_method_handler_t handler[4];
+  coap_method_handler_t handler[7];
 
   coap_key_t key;                /**< the actual key bytes for this resource */
 
@@ -93,6 +105,12 @@ typedef struct coap_resource_t {
    */
   str uri;
   int flags;
+
+  /**
+  * The next value for the Observe option. This field must be increased each
+  * time the resource changes. Only the lower 24 bits are sent.
+  */
+  unsigned int observe;
 
 } coap_resource_t;
 
@@ -115,7 +133,7 @@ coap_resource_t *coap_resource_init(const unsigned char *uri,
  * @p mode which must be one of @c COAP_RESOURCE_FLAGS_NOTIFY_NON
  * or @c COAP_RESOURCE_FLAGS_NOTIFY_CON.
  */
-static inline void
+COAP_STATIC_INLINE void
 coap_resource_set_mode(coap_resource_t *r, int mode) {
   r->flags = (r->flags & !COAP_RESOURCE_FLAGS_NOTIFY_CON) | mode;
 }
@@ -244,7 +262,7 @@ coap_print_status_t coap_print_link(const coap_resource_t *resource,
  * @param method   The CoAP request method to handle.
  * @param handler  The handler to register with @p resource.
  */
-static inline void
+COAP_STATIC_INLINE void
 coap_register_handler(coap_resource_t *resource,
                       unsigned char method,
                       coap_method_handler_t handler) {
@@ -285,41 +303,41 @@ void coap_hash_request_uri(const coap_pdu_t *request, coap_key_t key);
  * error.
  *
  * @param resource        The observed resource.
- * @param local_interface The local network interface where the observer is
- *                        attached to.
- * @param observer        The remote peer that wants to received status updates.
+ * @param session         The observer's session
  * @param token           The token that identifies this subscription.
+ * @param query           The query string, if any. subscription will
+                          take ownership of the string.
  * @return                A pointer to the added/updated subscription
  *                        information or @c NULL on error.
  */
 coap_subscription_t *coap_add_observer(coap_resource_t *resource,
-                                       const coap_endpoint_t *local_interface,
-                                       const coap_address_t *observer,
-                                       const str *token);
+                                       coap_session_t *session,
+                                       const str *token,
+                                       str *query);
 
 /**
  * Returns a subscription object for given @p peer.
  *
  * @param resource The observed resource.
- * @param peer     The address to search for.
+ * @param session  The observer's session
  * @param token    The token that identifies this subscription or @c NULL for
  *                 any token.
  * @return         A valid subscription if exists or @c NULL otherwise.
  */
 coap_subscription_t *coap_find_observer(coap_resource_t *resource,
-                                        const coap_address_t *peer,
+                                        coap_session_t *session,
                                         const str *token);
 
 /**
  * Marks an observer as alive.
  *
  * @param context  The CoAP context to use.
- * @param observer The transport address of the observer.
+ * @param session  The observer's session
  * @param token    The corresponding token that has been used for the
  *                 subscription.
  */
 void coap_touch_observer(coap_context_t *context,
-                         const coap_address_t *observer,
+                         coap_session_t *session,
                          const str *token);
 
 /**
@@ -328,14 +346,22 @@ void coap_touch_observer(coap_context_t *context,
  * observer and @p token existed, @c 0 otherwise.
  *
  * @param resource The observed resource.
- * @param observer The observer's address.
+ * @param session  The observer's session.
  * @param token    The token that identifies this subscription or @c NULL for
  *                 any token.
  * @return         @c 1 if the observer has been deleted, @c 0 otherwise.
  */
 int coap_delete_observer(coap_resource_t *resource,
-                         const coap_address_t *observer,
+                         coap_session_t *session,
                          const str *token);
+
+/**
+ * Removes any subscription for @p session and releases the allocated storage.
+ *
+ * @param context  The CoAP context to use.
+ * @param session  The observer's session.
+ */
+void coap_delete_observers(coap_context_t *context, coap_session_t *session);
 
 /**
  * Checks for all known resources, if they are dirty and notifies subscribed
@@ -390,8 +416,8 @@ coap_print_status_t coap_print_wellknown(coap_context_t *,
                                          size_t *, size_t,
                                          coap_opt_t *);
 
-void coap_handle_failed_notify(coap_context_t *,
-                               const coap_address_t *,
-                               const str *);
+void coap_handle_failed_notify(coap_context_t *, coap_session_t *, const str *);
+
+int coap_resource_set_dirty(coap_resource_t *r, const str *query);
 
 #endif /* _COAP_RESOURCE_H_ */

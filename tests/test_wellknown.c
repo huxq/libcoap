@@ -12,7 +12,9 @@
 #include <coap.h>
 
 #include <assert.h>
+#ifdef HAVE_NETINET_IN_H 
 #include <netinet/in.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +24,8 @@
 
 coap_context_t *ctx;	   /* Holds the coap context for most tests */
 coap_pdu_t *pdu;	   /* Holds the parsed PDU for most tests */
+coap_session_t *session;   /* Holds a reference-counted session object
+                            * that is passed to coap_wellknown_response(). */
 
 static void
 t_wellknown1(void) {
@@ -130,12 +134,12 @@ t_wellknown3(void) {
   coap_print_status_t result;
   int j;
   coap_resource_t *r;
-  static char uris[2 * COAP_MAX_PDU_SIZE];
+  static char uris[2 * 1024];
   unsigned char *uribuf = (unsigned char *)uris;
   unsigned char buf[40];
   size_t buflen = sizeof(buf);
   size_t offset;
-  const unsigned short num_resources = (sizeof(uris) / TEST_URI_LEN) - 1;
+  const uint16_t num_resources = (sizeof(uris) / TEST_URI_LEN) - 1;
 
   /* ,</0000> (TEST_URI_LEN + 4 chars) */
   for (j = 0; j < num_resources; j++) {
@@ -162,7 +166,7 @@ t_wellknown4(void) {
   coap_pdu_t *response;
   coap_block_t block;
 
-  response = coap_wellknown_response(ctx, pdu);
+  response = coap_wellknown_response(ctx, session, pdu);
 
   CU_ASSERT_PTR_NOT_NULL(response);
 
@@ -171,7 +175,7 @@ t_wellknown4(void) {
   CU_ASSERT(block.num == 0);
   CU_ASSERT(block.m == 1);
   CU_ASSERT(1 << (block.szx + 4)
-    == (unsigned char *)response->hdr + response->length - response->data);
+    == response->token + response->used_size - response->data);
 
   coap_delete_pdu(response);
 }
@@ -194,7 +198,7 @@ t_wellknown5(void) {
     return;
   }
 
-  response = coap_wellknown_response(ctx, pdu);
+  response = coap_wellknown_response(ctx, session, pdu);
 
   CU_ASSERT_PTR_NOT_NULL(response);
 
@@ -203,7 +207,7 @@ t_wellknown5(void) {
   CU_ASSERT(block.num == inblock.num);
   CU_ASSERT(block.m == 1);
   CU_ASSERT(1 << (block.szx + 4)
-    == (unsigned char *)response->hdr + response->length - response->data);
+    == response->token + response->used_size - response->data);
 
   coap_delete_pdu(response);
 }
@@ -218,9 +222,9 @@ t_wellknown6(void) {
   do {
     coap_pdu_clear(pdu, pdu->max_size);	/* clear PDU */
 
-    pdu->hdr->type = COAP_MESSAGE_NON;
-    pdu->hdr->code = COAP_REQUEST_GET;
-    pdu->hdr->id = htons(0x1234);
+    pdu->type = COAP_MESSAGE_NON;
+    pdu->code = COAP_REQUEST_GET;
+    pdu->tid = 0x1234;
 
     CU_ASSERT_PTR_NOT_NULL(pdu);
 
@@ -231,7 +235,7 @@ t_wellknown6(void) {
       return;
     }
 
-    response = coap_wellknown_response(ctx, pdu);
+    response = coap_wellknown_response(ctx, session, pdu);
 
     CU_ASSERT_PTR_NOT_NULL(response);
 
@@ -257,12 +261,15 @@ t_wkc_tests_create(void) {
 
   ctx = coap_new_context(&addr);
 
+  addr.addr.sin6.sin6_addr = in6addr_loopback;
+  session = coap_new_client_session(ctx, NULL, &addr, COAP_PROTO_UDP);
+
   pdu = coap_pdu_init(0, 0, 0, TEST_PDU_SIZE);
 #if 0
   /* add resources to coap context */
   if (ctx && pdu) {
     coap_resource_t *r;
-    static char _buf[2 * COAP_MAX_PDU_SIZE];
+    static char _buf[2 * 1024];
     unsigned char *buf = (unsigned char *)_buf;
     int i;
 

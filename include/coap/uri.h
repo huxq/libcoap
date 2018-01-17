@@ -1,7 +1,7 @@
 /*
  * uri.h -- helper functions for URI treatment
  *
- * Copyright (C) 2010-2011 Olaf Bergmann <bergmann@tzi.org>
+ * Copyright (C) 2010-2011,2016 Olaf Bergmann <bergmann@tzi.org>
  *
  * This file is part of the CoAP library libcoap. Please see README for terms
  * of use.
@@ -10,8 +10,25 @@
 #ifndef _COAP_URI_H_
 #define _COAP_URI_H_
 
+#include <stdint.h>
+
 #include "hashkey.h"
 #include "str.h"
+struct coap_pdu_t;
+
+/**
+ * The scheme specifiers. Secure schemes have an odd numeric value,
+ * others are even.
+ */
+enum coap_uri_scheme_t {
+  COAP_URI_SCHEME_COAP=0,
+  COAP_URI_SCHEME_COAPS=1,
+  COAP_URI_SCHEME_COAP_TCP=2,
+  COAP_URI_SCHEME_COAPS_TCP=3
+};
+
+/** This mask can be used to check if a parsed URI scheme is secure. */
+#define COAP_URI_SCHEME_SECURE_MASK 0x01
 
 /**
  * Representation of parsed URI. Components may be filled from a string with
@@ -19,11 +36,19 @@
  */
 typedef struct {
   str host;             /**< host part of the URI */
-  unsigned short port;  /**< The port in host byte order */
+  uint16_t port;  /**< The port in host byte order */
   str path;             /**< Beginning of the first path segment. 
                              Use coap_split_path() to create Uri-Path options */
   str query;            /**<  The query part if present */
+
+  /** The parsed scheme specifier. */
+  enum coap_uri_scheme_t scheme;
 } coap_uri_t;
+
+static inline int
+coap_uri_scheme_is_secure(const coap_uri_t *uri) {
+  return uri && ((uri->scheme & COAP_URI_SCHEME_SECURE_MASK) != 0);
+}
 
 /**
  * Creates a new coap_uri_t object from the specified URI. Returns the new
@@ -75,10 +100,8 @@ int coap_hash_path(const unsigned char *path, size_t len, coap_key_t key);
  * @param uri     The coap_uri_t object to store the result.
  * @return        @c 0 on success, or < 0 on error.
  *
- * @note The host name part will be converted to lower case by this
- * function.
  */
-int coap_split_uri(unsigned char *str_var, size_t len, coap_uri_t *uri);
+int coap_split_uri(const unsigned char *str_var, size_t len, coap_uri_t *uri);
 
 /**
  * Splits the given URI path into segments. Each segment is preceded
@@ -117,6 +140,13 @@ int coap_split_query(const unsigned char *s,
                      size_t length,
                      unsigned char *buf,
                      size_t *buflen);
+
+/**
+ * Extract query string from request PDU according to escape rules in 6.5.8.
+ * @param request Request PDU.
+ * @return        Reconstructed and escaped query string part.
+ */
+str *coap_get_query(struct coap_pdu_t *request);
 
 /** @} */
 

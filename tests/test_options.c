@@ -337,6 +337,18 @@ t_encode_option8(void) {
   CU_ASSERT(result == 0);
 }
 
+static void
+t_encode_option9(void) {
+  uint8_t teststr[] = { 0xe1, 0x00, 0x00 };
+  unsigned char buf[40] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+  size_t result;
+  
+  result = coap_opt_setheader((coap_opt_t *)buf, sizeof(buf), 269, 1);
+  CU_ASSERT(result == sizeof(teststr));
+  
+  CU_ASSERT(memcmp(buf, teststr, result) == 0);
+}
+
 /************************************************************************
  ** accessor tests
  ************************************************************************/
@@ -423,17 +435,23 @@ t_access_option7(void) {
 
 #define TEST_MAX_SIZE 1000
 
+#ifdef _MSC_VER 
+#  define ALIGNED(x) 
+#else 
+#  define ALIGNED(x) __attribute__ ((aligned (x))) 
+#endif 
+
 static void
 t_iterate_option1(void) {
   /* CoAP PDU without token, options, or data */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
+  uint8_t teststr[] ALIGNED(8) = { 
     0x00, 0x00, 0x00, 0x00 
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token = teststr,
+    .used_size = 0
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -451,14 +469,15 @@ t_iterate_option1(void) {
 static void
 t_iterate_option2(void) {
   /* CoAP PDU with token but without options and data */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x03, 0x00, 0x00, 0x00, 't', 'o', 'k'
+  uint8_t teststr[3] ALIGNED(8) = { 
+    't', 'o', 'k'
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 3,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -476,15 +495,16 @@ t_iterate_option2(void) {
 static void
 t_iterate_option3(void) {
   /* CoAP PDU with token and options */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x03, 0x00, 0x00, 0x00, 't', 'o', 'k', 0x13, 
+  uint8_t teststr[] ALIGNED(8) = { 
+    't', 'o', 'k', 0x13, 
     'o',  'p',  't',  0x00, 0xd1, 0x10, 'x'
   };
 
-  coap_pdu_t pdu = { 
+  coap_pdu_t pdu = {
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 3,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -497,17 +517,17 @@ t_iterate_option3(void) {
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 1);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 7);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 3);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 1);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 11);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 7);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 30);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 12);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 8);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -517,16 +537,17 @@ t_iterate_option3(void) {
 static void
 t_iterate_option4(void) {
   /* CoAP PDU with token, options, and data */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x03, 0x00, 0x00, 0x00, 't', 'o', 'k', 0x13, 
+  uint8_t teststr[] ALIGNED(8) = { 
+    't', 'o', 'k', 0x13, 
     'o',  'p',  't',  0x00, 0xd1, 0x10, 'x', 0xff,
     'd',  'a',  't',  'a'
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 3,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -539,17 +560,17 @@ t_iterate_option4(void) {
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 1);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 7);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 3);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 1);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 11);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 7);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 30);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 12);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 8);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -559,15 +580,16 @@ t_iterate_option4(void) {
 static void
 t_iterate_option5(void) {
   /* CoAP PDU with malformed option */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x52, 'o', 'p', 0xee, 
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x52, 'o', 'p', 0xee, 
     0x12, 0x03, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -580,7 +602,7 @@ t_iterate_option5(void) {
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 5);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 4);
+  CU_ASSERT_PTR_EQUAL(option, teststr);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -591,15 +613,16 @@ static void
 t_iterate_option6(void) {
   /* option filter */
   /* CoAP PDU with token, options, and data */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x20, 0x00, 0x00,
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x20, 0x00, 0x00,
     0xc0, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -615,17 +638,17 @@ t_iterate_option6(void) {
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 10);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 5);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 1);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 10);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 6);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 2);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 10);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 7);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 3);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -635,15 +658,16 @@ t_iterate_option6(void) {
 static void
 t_iterate_option7(void) {
   /* option filter */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x20, 0x00, 0x00,
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x20, 0x00, 0x00,
     0xc0, 0x00, 0x10, 0x10, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -661,17 +685,17 @@ t_iterate_option7(void) {
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 8);
+  CU_ASSERT_PTR_EQUAL(option, teststr);
+
+  option = coap_option_next(&oi);
+  CU_ASSERT(oi.bad == 0);
+  CU_ASSERT(oi.type == 22);
   CU_ASSERT_PTR_EQUAL(option, teststr + 4);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
   CU_ASSERT(oi.type == 22);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 8);
-
-  option = coap_option_next(&oi);
-  CU_ASSERT(oi.bad == 0);
-  CU_ASSERT(oi.type == 22);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 9);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 5);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -681,15 +705,16 @@ t_iterate_option7(void) {
 static void
 t_iterate_option8(void) {
   /* option filter */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x20, 0x00, 0x00,
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x20, 0x00, 0x00,
     0xc0, 0x00, 0x10, 0x10, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -711,15 +736,16 @@ t_iterate_option8(void) {
 static void
 t_iterate_option9(void) {
   /* options filter: option number too large for filter */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x20, 0x00, 0x00,
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x20, 0x00, 0x00,
     0xc0, 0x00, 0x10, 0x10, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -741,15 +767,16 @@ t_iterate_option9(void) {
 static void
 t_iterate_option10(void) {
   /* options filter: option numbers in PDU exceed filter size */
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x20, 0x00, 0x00,
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x20, 0x00, 0x00,
     0xd0, 0x26, 0xe0, 0x10, 0x00
   };
 
   coap_pdu_t pdu = { 
     .max_size = TEST_MAX_SIZE,
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
   coap_opt_iterator_t oi, *result;
   coap_opt_t *option;
@@ -765,7 +792,7 @@ t_iterate_option10(void) {
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 0);
-  CU_ASSERT_PTR_EQUAL(option, teststr + 8);
+  CU_ASSERT_PTR_EQUAL(option, teststr + 4);
 
   option = coap_option_next(&oi);
   CU_ASSERT(oi.bad == 1);
@@ -929,6 +956,7 @@ t_init_option_tests(void) {
     OPTION_ENCODER_TEST(6, "encode option #6");
     OPTION_ENCODER_TEST(7, "encode option #7");
     OPTION_ENCODER_TEST(8, "encode option #8");
+    OPTION_ENCODER_TEST(9, "encode option #9");
     
   } else {
     fprintf(stderr, "W: cannot add option encoder test suite (%s)\n", 

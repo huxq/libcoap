@@ -17,9 +17,11 @@ install-sh
 libcoap-*.tar.bz2
 libtool
 ltmain.sh
-m4/
-# warn about specific macros in the m4 directory if they missing
-!m4/ax_*
+m4/libtool.m4
+m4/ltoptions.m4
+m4/ltsugar.m4
+m4/ltversion.m4
+m4/lt~obsolete.m4
 missing
 stamp-h1
 
@@ -27,11 +29,11 @@ stamp-h1
 .libs/
 libcoap*.la
 libcoap*.pc
-src/.deps/
-src/.dirstamp
-src/.libs/
-src/*.o
-src/*.lo
+src/**/.deps/
+src/**/.dirstamp
+src/**/.libs/
+src/**/*.o
+src/**/*.lo
 
 # the doc/ folder
 doc/Doxyfile
@@ -60,3 +62,8 @@ include/coap/coap.h
 tests/.deps
 tests/testdriver
 tests/*.o
+
+# ctags - Sublime plugin
+tags
+.tags*
+TAGS

@@ -316,10 +316,16 @@ t_parse_uri12(void) {
   }
 }
 
+#ifdef _MSC_VER 
+#  define ALIGNED(x) 
+#else 
+#  define ALIGNED(x) __attribute__ ((aligned (x))) 
+#endif 
+
 static void
 t_parse_uri13(void) {
-  uint8_t teststr[] __attribute__ ((aligned (8))) = { 
-    0x00, 0x00, 0x00, 0x00, 0x80, 0x03, 'f',  'o',
+  uint8_t teststr[] ALIGNED(8) = { 
+    0x80, 0x03, 'f',  'o',
     'o',  0x3b, '.',  'w',  'e',  'l',  'l',  '-',  
     'k',  'n',  'o',  'w',  'n',  0x04,  'c', 'o',  
     'r',  'e'
@@ -327,8 +333,9 @@ t_parse_uri13(void) {
 
   coap_pdu_t pdu = { 
     .max_size = sizeof(teststr),
-    .hdr = (coap_hdr_t *)teststr,
-    .length = sizeof(teststr)
+    .token_length = 0,
+    .token = teststr,
+    .used_size = sizeof(teststr)
   };
 
   coap_key_t key;
@@ -337,6 +344,89 @@ t_parse_uri13(void) {
   
   CU_ASSERT(sizeof(key) == sizeof(COAP_DEFAULT_WKC_HASHKEY) - 1);
   CU_ASSERT_NSTRING_EQUAL(key, COAP_DEFAULT_WKC_HASHKEY, sizeof(key));
+}
+
+static void
+t_parse_uri14(void) {
+  char teststr[] =
+    "longerthan13lessthan270=0123456789012345678901234567890123456789";
+  int result;
+
+  /* buf is large enough to hold sizeof(teststr) - 1 bytes content and
+   * 2 bytes for the option header. */
+  unsigned char buf[sizeof(teststr) + 1];
+  size_t buflen = sizeof(buf);
+
+  result = coap_split_query((unsigned char *)teststr, strlen(teststr),
+                            buf, &buflen);
+  if (result >= 0) {
+    CU_ASSERT(buf[0] == 0x0d);
+    CU_ASSERT(buf[1] == strlen(teststr) - 13);
+
+    CU_ASSERT_NSTRING_EQUAL(buf+2, teststr, strlen(teststr));
+  } else {
+    CU_FAIL("uri parser error");
+  }
+}
+
+static void
+t_parse_uri15(void) {
+  char teststr[] =
+    "longerthan13lessthan270=0123456789012345678901234567890123456789";
+  int result;
+
+  /* buf is too small to hold sizeof(teststr) - 1 bytes content and 2
+   * bytes for the option header. */
+  unsigned char buf[sizeof(teststr) - 1];
+  size_t buflen = sizeof(buf);
+
+  result = coap_split_query((unsigned char *)teststr, strlen(teststr),
+                            buf, &buflen);
+  CU_ASSERT(result == 0);
+}
+
+static void
+t_parse_uri16(void) {
+  char teststr[] =
+    "longerthan13lessthan270=0123456789012345678901234567890123456789";
+  int result;
+
+  /* buf is too small to hold the option header. */
+  unsigned char buf[1];
+  size_t buflen = sizeof(buf);
+
+  result = coap_split_query((unsigned char *)teststr, strlen(teststr),
+                            buf, &buflen);
+  CU_ASSERT(result == 0);
+}
+
+static void
+t_parse_uri17(void) {
+  char teststr[] =
+    "thisislongerthan269="
+    "01234567890123456789012345678901234567890123456789"
+    "01234567890123456789012345678901234567890123456789"
+    "01234567890123456789012345678901234567890123456789"
+    "01234567890123456789012345678901234567890123456789"
+    "01234567890123456789012345678901234567890123456789";
+  int result;
+
+  /* buf is large enough to hold sizeof(teststr) - 1 bytes content and
+   * 3 bytes for the option header. */
+  unsigned char buf[sizeof(teststr) + 2];
+  size_t buflen = sizeof(buf);
+
+  result = coap_split_query((unsigned char *)teststr, strlen(teststr),
+                            buf, &buflen);
+  if (result >= 0) {
+    CU_ASSERT(buf[0] == 0x0e);
+    CU_ASSERT(buf[1] == (((strlen(teststr) - 269) >> 8) & 0xff));
+    CU_ASSERT(buf[2] == ((strlen(teststr) - 269) & 0xff));
+
+    CU_ASSERT_NSTRING_EQUAL(buf+3, teststr, strlen(teststr));
+  } else {
+    CU_FAIL("uri parser error");
+  }
 }
 
 CU_pSuite
@@ -370,6 +460,10 @@ t_init_uri_tests(void) {
   URI_TEST(suite, t_parse_uri11);
   URI_TEST(suite, t_parse_uri12);
   URI_TEST(suite, t_parse_uri13);
+  URI_TEST(suite, t_parse_uri14);
+  URI_TEST(suite, t_parse_uri15);
+  URI_TEST(suite, t_parse_uri16);
+  URI_TEST(suite, t_parse_uri17);
 
   return suite;
 }

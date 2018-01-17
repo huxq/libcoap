@@ -31,7 +31,10 @@
  */
 
 #include "coap_config.h"
+
+#define DEBUG DEBUG_PRINT
 #include "net/ip/uip-debug.h"
+#include "net/net-debug.h"
 
 #include <string.h>
 
@@ -71,9 +74,9 @@ init_coap_server(coap_context_t **ctx) {
   uip_ip6addr(&gw_addr, 0xaaaa, 0, 0, 0, 0, 0, 0, 0x0001);
   uip_ds6_defrt_add(&gw_addr, 0);
 
-  uip_debug_lladdr_print(&uip_lladdr);
+  PRINTLLADDR(&uip_lladdr);
   printf("\r\n");
-  uip_debug_ipaddr_print(&listen_addr.addr);
+  PRINT6ADDR(&listen_addr.addr);
   printf("\r\n");
 
   *ctx = coap_new_context(&listen_addr);
@@ -108,9 +111,8 @@ hnd_get_time(coap_context_t  *ctx, struct coap_resource_t *resource,
     my_clock_base ? COAP_RESPONSE_CODE(205) : COAP_RESPONSE_CODE(404);
 
   if (coap_find_observer(resource, peer, token)) {
-    /* FIXME: need to check for resource->dirty? */
     coap_add_option(response, COAP_OPTION_OBSERVE, 
-		    coap_encode_var_bytes(buf, ctx->observe), buf);
+		    coap_encode_var_bytes(buf, resource->observe), buf);
   }
 
   if (my_clock_base)
@@ -131,11 +133,8 @@ hnd_get_time(coap_context_t  *ctx, struct coap_resource_t *resource,
 	&& memcmp(COAP_OPT_VALUE(option), "ticks",
 		  min(5, COAP_OPT_LENGTH(option))) == 0) {
       /* output ticks */
-      len = snprintf((char *)buf, 
-	   min(sizeof(buf), response->max_size - response->length),
-		     "%u", (unsigned int)now);
+      len = snprintf((char *)buf, sizeof(buf), "%u", (unsigned int)now);
       coap_add_data(response, len, buf);
-
     }
   }
 }
@@ -218,7 +217,7 @@ PROCESS_THREAD(coap_server_process, ev, data)
       coap_read(coap_context);	/* read received data */
       /* coap_dispatch(coap_context); /\* and dispatch PDUs from receivequeue *\/ */
     } else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&dirty_timer)) {
-      time_resource->dirty = 1;
+      coap_resource_set_dirty(time_resource, NULL);
       etimer_reset(&dirty_timer);
     }
   }
